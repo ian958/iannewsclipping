@@ -1,0 +1,19 @@
+{
+  "name": "keyword-optimization-agents",
+  "version": "1.0.0",
+  "description": "키워드 최적화 서브에이전트 시스템 - 빅카인즈 검색 쿼리 최적화",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx main.ts",
+    "dev": "tsx watch main.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}

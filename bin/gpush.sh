@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# gpush.sh: 신규 로그 파일 자동 커밋 후 push (타임라인 누적)
+# gpush.sh: 로그 아카이브 파일 자동 커밋 후 push (타임라인 누적)
 # 사용법: bash bin/gpush.sh [git push 옵션]
 #   예)  bash bin/gpush.sh -u origin claude/news-clipping-automation-jvDXr
 #        bash bin/gpush.sh                (tracking 브랜치로 push)
@@ -15,15 +15,21 @@ cd "${REPO_ROOT}" || exit 1
 
 REPORT_DIR="report"
 
-# ── 신규 미추적 파일만 감지 (삭제·수정 파일 제외) ────────────
+# ── 신규 미추적 파일 감지 (.json/.jsonl/.txt) ─────────────────
 UNTRACKED=$(git ls-files --others --exclude-standard "${REPORT_DIR}/" 2>/dev/null | \
             grep -E "\.(json|jsonl|txt)$")
 
-if [ -n "${UNTRACKED}" ]; then
-    echo "[gpush] 📋 신규 로그 파일 감지 → 타임라인 커밋 추가"
-    echo "${UNTRACKED}" | while read -r f; do echo "  + ${f}"; done
+# ── 수정된 아카이브 파일 감지 (query_candidates_archive / process_log_archive) ─
+MODIFIED_ARCHIVES=$(git diff --name-only "${REPORT_DIR}/" 2>/dev/null | \
+                    grep -E "(query_candidates_archive|process_log_archive)\.(txt|jsonl)$")
 
-    echo "${UNTRACKED}" | xargs git add 2>/dev/null
+TARGETS=$(printf "%s\n%s" "${UNTRACKED}" "${MODIFIED_ARCHIVES}" | sed '/^$/d' | sort -u)
+
+if [ -n "${TARGETS}" ]; then
+    echo "[gpush] 📋 로그 파일 감지 → 타임라인 커밋 추가"
+    echo "${TARGETS}" | while read -r f; do echo "  + ${f}"; done
+
+    echo "${TARGETS}" | xargs git add 2>/dev/null
 
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
     git commit -m "chore: accumulate timeline logs (${TIMESTAMP})

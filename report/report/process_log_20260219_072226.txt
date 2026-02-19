@@ -1,0 +1,68 @@
+======================================================================
+  테스트 프로세스 기록
+  세션: keyword_search_design  |  버전: 1.0.0
+  시작: 2026-02-19T07:22:25.746130
+  완료: 2026-02-19T07:22:26.862648
+======================================================================
+
+[ 에이전트 실행 이벤트 ]
+  2026-02-19T07:22:25.746148  [Main]  테스트 파이프라인 시작
+  2026-02-19T07:22:26.831279  [Method A (K-means)]  클러스터링 완료 (1.0849s)
+    출력: {'n_clusters': 14, 'param': 'k=14 (Silhouette=0.069 최대, 범위 2~15)'}
+  2026-02-19T07:22:26.847837  [Method B (BERT)]  클러스터링 완료 (0.0162s)
+    출력: {'n_clusters': 15, 'param': 'k=15 (Silhouette=0.162, 비영 임계=0.058)'}
+  2026-02-19T07:22:26.858172  [Method C (Subagent)]  멀티에이전트 파이프라인 완료 (0.0101s)
+    출력: {'n_clusters': 6, 'agent_log_lines': 8}
+  2026-02-19T07:22:26.858583  [Method D (LLM)]  의미 카테고리 분류 완료 (0.0001s)
+    출력: {'n_clusters': 7, 'categories': ['AI·챗봇 기술', '학습 플랫폼·에듀테크', '정부 정책·사업비', '대학 인사·행정', 'CTL·교수학습센터', '에듀테크 경쟁사', '파트너·고객 대학교']}
+  2026-02-19T07:22:26.860762  [QueryCoordinator]  Phase 6 파이프라인 시작
+  2026-02-19T07:22:26.860818  [QueryBuilderAgent]  카테고리별 OR 묶음 생성
+    출력: {'n_or_groups': 7, 'included_keywords': 83}
+  2026-02-19T07:22:26.860902  [StrategyAgent]  3가지 AND/OR 전략 결정
+    출력: {'n_strategies': 3}
+  2026-02-19T07:22:26.860999  [QueryFormatterAgent]  검색식 문자열 포맷팅
+    출력: {'n_queries': 3}
+  2026-02-19T07:22:26.861053  [ValidatorAgent]  검색식 유효성 검증
+    출력: {'passed': 3, 'failed': 0}
+  2026-02-19T07:22:26.861101  [QueryCoordinator]  Phase 6 파이프라인 완료
+    출력: {'queries_passed': 3}
+  2026-02-19T07:22:26.862297  [Main]  전체 파이프라인 완료
+    출력: {'phases_run': ['A', 'B', 'C', 'D', 'Phase6'], 'query_candidates': 3}
+
+[ 의사결정 기록 ]
+  [Method A]  최적 k = 14
+    근거: Silhouette 최대화 자동 결정. k=14 (Silhouette=0.069 최대, 범위 2~15)
+  [Method B]  임계값·k = 15
+    근거: Silhouette 최대화 (시뮬레이션(TF-IDF 대체)). k=15 (Silhouette=0.162, 비영 임계=0.058)
+  [Method C]  에이전트 로그 = [Coordinator] 서브에이전트 파이프라인 시작
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 = [Agent 1: Categorizer] TF-IDF + Dendrogram으로 초기 분류
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 =   → 12개 카테고리 생성
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 = [Agent 2: Filter] 중복/노이즈 제거
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 =   → 0개 중복 제거
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 = [Agent 3: Synthesizer] 대표 키워드 선정 + 카테고리 라벨링
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 = [Coordinator] 동일 라벨 그룹 병합
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method C]  에이전트 로그 =   → 병합 후 6개 최종 그룹
+    근거: SubagentCoordinator 내부 실행 단계
+  [Method D]  카테고리 체계 = ['AI·챗봇 기술', '학습 플랫폼·에듀테크', '정부 정책·사업비', '대학 인사·행정', 'CTL·교수학습센터', '에듀테크 경쟁사', '파트너·고객 대학교']
+    근거: 7개 카테고리 규칙 (LLM 판단 시뮬레이션). 의미론적 맥락 기반 단일 패스 분류.
+  [QueryBuilderAgent]  키워드 길이 필터 = 최대 3단어
+    근거: 빅카인즈 검색식에 '국립목포해양대학교' 같은 긴 기관명을 포함하면 다른 표기(약칭·한자병기)로 작성된 기사가 누락됨. 핵심 개념어 위주로 OR 묶음을 구성해 재현율 유지.
+  [StrategyAgent]  후보1_광범위 (Recall 최대화) = AND=[]
+    근거: 누락(FN) 최소화 목적. 광범위하게 수집 후 Phase 4 스코어링에서 관련도 필터링 예정. 일일 뉴스 건수 확인 및 임계값 설정에 적합.
+  [StrategyAgent]  후보2_균형 (Precision-Recall 균형) = AND=['AI·챗봇 기술', '정부 정책·사업비']
+    근거: 회사 제품(AI 챗봇)과 직접 연관된 정책 뉴스에 집중. AND 2개로 잡음을 줄이면서 핵심 비즈니스 컨텍스트 유지. 일반적인 일일 모니터링에 권장.
+  [StrategyAgent]  후보3_정밀 (Precision 최대화) = AND=['AI·챗봇 기술', '학습 플랫폼·에듀테크', '정부 정책·사업비']
+    근거: 노이즈 최소화. 세 조건을 모두 만족하는 고관련도 기사만 수집. 결과 건수가 적으므로 주간·월간 심층 분석에 적합. AND 3개 이상이면 빅카인즈 검색식이 복잡해지므로 최대 권장선.
+  [ValidatorAgent]  검증: 후보1_광범위 (Recall 최대화) = PASS
+    근거: kw=45, AND=0, OR=44. AND 없음: 결과 과다·스코어링 부하 주의
+  [ValidatorAgent]  검증: 후보2_균형 (Precision-Recall 균형) = PASS
+    근거: kw=23, AND=1, OR=21. 이상 없음
+  [ValidatorAgent]  검증: 후보3_정밀 (Precision 최대화) = PASS
+    근거: kw=30, AND=2, OR=27. 이상 없음

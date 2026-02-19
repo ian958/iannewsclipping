@@ -630,10 +630,10 @@ if __name__ == "__main__":
 
     validated = run_phase6(r_d, logger)
     print_query_candidates(validated)
-    save_query_candidates(validated)
+    save_query_candidates(validated, out_dir=".")      # report/ 기준 현재 디렉토리
 
     # ── 전체 프로세스 로그 저장 ────────────────────────────
     logger.record("Main", "전체 파이프라인 완료",
                   outputs={"phases_run": ["A", "B", "C", "D", "Phase6"],
                            "query_candidates": len(validated)})
-    logger.save()
+    logger.save(out_dir=".")                           # report/ 기준 현재 디렉토리

@@ -623,12 +623,13 @@ if __name__ == "__main__":
 
     # ── Phase 6: 검색식 생성 (Subagent 기반) ───────────────
     print("\n\n" + "=" * 70)
-    print("  Phase 6: 검색식 생성 (AND/OR 쿼리 빌더 서브에이전트)")
+    print("  Phase 6: 검색식 생성 (OR 전용 쿼리 빌더 서브에이전트)")
     print("=" * 70)
-    print("  입력: Method D 의미 카테고리 (가장 명확한 라벨 보유)")
-    print("  목표: 빅카인즈용 최종 검색식 후보 3개 생성\n")
+    print("  입력: A/B/C/D 4개 방법 전체 결과 (임의 선택 없음)")
+    print("  처리: KeywordMergerAgent → 합의도 계산 → 카테고리 순위 결정")
+    print("  목표: 빅카인즈용 OR 전용 검색식 후보 3개 생성\n")
 
-    validated = run_phase6(r_d, logger)
+    validated = run_phase6(r_a, r_b, r_c, r_d, logger)
     print_query_candidates(validated)
     save_query_candidates(validated, out_dir=".")      # report/ 기준 현재 디렉토리
 

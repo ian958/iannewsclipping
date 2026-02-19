@@ -1,0 +1,417 @@
+{
+  "version": "1.1.0",
+  "session": "keyword_search_design",
+  "started_at": "2026-02-19T07:55:44.741898",
+  "completed_at": "2026-02-19T07:55:45.642975",
+  "total_events": 13,
+  "total_decisions": 29,
+  "events": [
+    {
+      "ts": "2026-02-19T07:55:44.741914",
+      "agent": "Main",
+      "action": "테스트 파이프라인 시작",
+      "inputs": {
+        "total_keywords": 83
+      },
+      "outputs": {},
+      "elapsed_sec": null
+    },
+    {
+      "ts": "2026-02-19T07:55:45.615919",
+      "agent": "Method A (K-means)",
+      "action": "클러스터링 완료",
+      "inputs": {
+        "n_keywords": 83
+      },
+      "outputs": {
+        "n_clusters": 14,
+        "param": "k=14 (Silhouette=0.069 최대, 범위 2~15)"
+      },
+      "elapsed_sec": 0.8737
+    },
+    {
+      "ts": "2026-02-19T07:55:45.630506",
+      "agent": "Method B (BERT)",
+      "action": "클러스터링 완료",
+      "inputs": {
+        "n_keywords": 83
+      },
+      "outputs": {
+        "n_clusters": 15,
+        "param": "k=15 (Silhouette=0.162, 비영 임계=0.058)"
+      },
+      "elapsed_sec": 0.0145
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639399",
+      "agent": "Method C (Subagent)",
+      "action": "멀티에이전트 파이프라인 완료",
+      "inputs": {
+        "n_keywords": 83
+      },
+      "outputs": {
+        "n_clusters": 6,
+        "agent_log_lines": 8
+      },
+      "elapsed_sec": 0.0088
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639625",
+      "agent": "Method D (LLM)",
+      "action": "의미 카테고리 분류 완료",
+      "inputs": {
+        "n_keywords": 83
+      },
+      "outputs": {
+        "n_clusters": 7,
+        "categories": [
+          "AI·챗봇 기술",
+          "학습 플랫폼·에듀테크",
+          "정부 정책·사업비",
+          "대학 인사·행정",
+          "CTL·교수학습센터",
+          "에듀테크 경쟁사",
+          "파트너·고객 대학교"
+        ]
+      },
+      "elapsed_sec": 0.0001
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641077",
+      "agent": "QueryCoordinator",
+      "action": "Phase 6 파이프라인 시작",
+      "inputs": {
+        "methods": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      "outputs": {},
+      "elapsed_sec": null
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641306",
+      "agent": "KeywordMergerAgent",
+      "action": "4개 방법(A/B/C/D) 결과 통합 및 합의도 계산",
+      "inputs": {
+        "methods": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "n_categories": 7,
+        "total_keywords": 83
+      },
+      "outputs": {
+        "consensus_scores": {
+          "AI·챗봇 기술": 1.0,
+          "에듀테크 경쟁사": 1.0,
+          "파트너·고객 대학교": 0.96,
+          "CTL·교수학습센터": 0.771,
+          "학습 플랫폼·에듀테크": 0.429,
+          "대학 인사·행정": 0.4,
+          "정부 정책·사업비": 0.331
+        },
+        "top_consensus_cat": "AI·챗봇 기술"
+      },
+      "elapsed_sec": 0.0002
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641417",
+      "agent": "QueryBuilderAgent",
+      "action": "카테고리별 OR 묶음 생성",
+      "inputs": {
+        "n_categories": 7,
+        "total_keywords": 83
+      },
+      "outputs": {
+        "n_or_groups": 7,
+        "included_keywords": 83
+      },
+      "elapsed_sec": 0.0
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641524",
+      "agent": "StrategyAgent",
+      "action": "OR 전용 3가지 전략 결정 (AND 없음)",
+      "inputs": {
+        "n_categories": 7,
+        "ranked_categories": [
+          "AI·챗봇 기술",
+          "CTL·교수학습센터",
+          "에듀테크 경쟁사",
+          "학습 플랫폼·에듀테크",
+          "파트너·고객 대학교",
+          "정부 정책·사업비",
+          "대학 인사·행정"
+        ]
+      },
+      "outputs": {
+        "후보1_cats": 7,
+        "후보2_cats": 5,
+        "후보3_cats": 3
+      },
+      "elapsed_sec": 0.0
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641589",
+      "agent": "QueryFormatterAgent",
+      "action": "OR 검색식 문자열 포맷팅",
+      "inputs": {
+        "n_strategies": 3
+      },
+      "outputs": {
+        "n_queries": 3
+      },
+      "elapsed_sec": 0.0
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641653",
+      "agent": "ValidatorAgent",
+      "action": "검색식 유효성 검증",
+      "inputs": {
+        "n_queries": 3
+      },
+      "outputs": {
+        "passed": 3,
+        "failed": 0
+      },
+      "elapsed_sec": null
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641677",
+      "agent": "QueryCoordinator",
+      "action": "Phase 6 파이프라인 완료",
+      "inputs": {},
+      "outputs": {
+        "queries_passed": 3
+      },
+      "elapsed_sec": null
+    },
+    {
+      "ts": "2026-02-19T07:55:45.642816",
+      "agent": "Main",
+      "action": "전체 파이프라인 완료",
+      "inputs": {},
+      "outputs": {
+        "phases_run": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "Phase6"
+        ],
+        "query_candidates": 3
+      },
+      "elapsed_sec": null
+    }
+  ],
+  "decisions": [
+    {
+      "ts": "2026-02-19T07:55:45.615937",
+      "agent": "Method A",
+      "parameter": "최적 k",
+      "value": "14",
+      "reasoning": "Silhouette 최대화 자동 결정. k=14 (Silhouette=0.069 최대, 범위 2~15)"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.630519",
+      "agent": "Method B",
+      "parameter": "임계값·k",
+      "value": "15",
+      "reasoning": "Silhouette 최대화 (시뮬레이션(TF-IDF 대체)). k=15 (Silhouette=0.162, 비영 임계=0.058)"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639412",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "[Coordinator] 서브에이전트 파이프라인 시작",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639414",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "[Agent 1: Categorizer] TF-IDF + Dendrogram으로 초기 분류",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639415",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "  → 12개 카테고리 생성",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639416",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "[Agent 2: Filter] 중복/노이즈 제거",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639417",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "  → 0개 중복 제거",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639419",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "[Agent 3: Synthesizer] 대표 키워드 선정 + 카테고리 라벨링",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639421",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "[Coordinator] 동일 라벨 그룹 병합",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639422",
+      "agent": "Method C",
+      "parameter": "에이전트 로그",
+      "value": "  → 병합 후 6개 최종 그룹",
+      "reasoning": "SubagentCoordinator 내부 실행 단계"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.639634",
+      "agent": "Method D",
+      "parameter": "카테고리 체계",
+      "value": "['AI·챗봇 기술', '학습 플랫폼·에듀테크', '정부 정책·사업비', '대학 인사·행정', 'CTL·교수학습센터', '에듀테크 경쟁사', '파트너·고객 대학교']",
+      "reasoning": "7개 카테고리 규칙 (LLM 판단 시뮬레이션). 의미론적 맥락 기반 단일 패스 분류."
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641310",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: AI·챗봇 기술",
+      "value": "1.000",
+      "reasoning": "A/B/C 방법에서 'AI·챗봇 기술' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 1.000"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641312",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: 에듀테크 경쟁사",
+      "value": "1.000",
+      "reasoning": "A/B/C 방법에서 '에듀테크 경쟁사' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 1.000"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641314",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: 파트너·고객 대학교",
+      "value": "0.960",
+      "reasoning": "A/B/C 방법에서 '파트너·고객 대학교' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 0.960"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641317",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: CTL·교수학습센터",
+      "value": "0.771",
+      "reasoning": "A/B/C 방법에서 'CTL·교수학습센터' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 0.771"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641318",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: 학습 플랫폼·에듀테크",
+      "value": "0.429",
+      "reasoning": "A/B/C 방법에서 '학습 플랫폼·에듀테크' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 0.429"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641320",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: 대학 인사·행정",
+      "value": "0.400",
+      "reasoning": "A/B/C 방법에서 '대학 인사·행정' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 0.400"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641322",
+      "agent": "KeywordMergerAgent",
+      "parameter": "합의도: 정부 정책·사업비",
+      "value": "0.331",
+      "reasoning": "A/B/C 방법에서 '정부 정책·사업비' 카테고리 멤버 쌍이 동일 클러스터에 공출현하는 비율 = 0.331"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641421",
+      "agent": "QueryBuilderAgent",
+      "parameter": "키워드 길이 필터",
+      "value": "최대 3단어",
+      "reasoning": "빅카인즈 검색식에 긴 기관명을 포함하면 약칭·다른 표기로 작성된 기사가 누락됨. 핵심 개념어 위주로 OR 묶음 구성해 재현율 유지."
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641507",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: AI·챗봇 기술",
+      "value": "1.000",
+      "reasoning": "비즈니스우선순위=10, 합의도=1.000, 최종점수=1.000"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641510",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: CTL·교수학습센터",
+      "value": "0.791",
+      "reasoning": "비즈니스우선순위=8, 합의도=0.771, 최종점수=0.791"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641513",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: 에듀테크 경쟁사",
+      "value": "0.790",
+      "reasoning": "비즈니스우선순위=7, 합의도=1.000, 최종점수=0.790"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641515",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: 학습 플랫폼·에듀테크",
+      "value": "0.759",
+      "reasoning": "비즈니스우선순위=9, 합의도=0.429, 최종점수=0.759"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641517",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: 파트너·고객 대학교",
+      "value": "0.568",
+      "reasoning": "비즈니스우선순위=4, 합의도=0.960, 최종점수=0.568"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641519",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: 정부 정책·사업비",
+      "value": "0.519",
+      "reasoning": "비즈니스우선순위=6, 합의도=0.331, 최종점수=0.519"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641521",
+      "agent": "StrategyAgent",
+      "parameter": "카테고리 순위: 대학 인사·행정",
+      "value": "0.330",
+      "reasoning": "비즈니스우선순위=3, 합의도=0.400, 최종점수=0.330"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641642",
+      "agent": "ValidatorAgent",
+      "parameter": "검증: 후보1_전체 (최대 수집)",
+      "value": "PASS",
+      "reasoning": "kw=83, AND=0, OR=82. 키워드 83개: 결과 과다 주의"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641646",
+      "agent": "ValidatorAgent",
+      "parameter": "검증: 후보2_핵심 (비즈니스 핵심)",
+      "value": "PASS",
+      "reasoning": "kw=61, AND=0, OR=60. 키워드 61개: 결과 과다 주의"
+    },
+    {
+      "ts": "2026-02-19T07:55:45.641649",
+      "agent": "ValidatorAgent",
+      "parameter": "검증: 후보3_정밀 (제품집중)",
+      "value": "PASS",
+      "reasoning": "kw=31, AND=0, OR=30. 이상 없음"
+    }
+  ]
+}

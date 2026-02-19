@@ -1,16 +1,19 @@
 """
-Phase 6: 검색식 생성 - Subagent 기반 AND/OR 쿼리 빌더
+Phase 6: 검색식 생성 - Subagent 기반 OR+AND 혼합 쿼리 빌더
 ================================================================
 입력  : 클러스터링 결과 (A/B/C/D 4개 방법 모두)
-출력  : 최종 검색식 후보 3개 (모두 OR 기반, 범위 순)
-기록  : ProcessLogger → JSON + TXT 파일 자동 저장
+출력  : 최종 검색식 후보 5개 (각 후보마다 OR·AND 혼합 구성)
+기록  : ProcessLogger → query_candidates_archive.txt +
+                        process_log_archive.jsonl 에 누적
 
 서브에이전트 구성
   KeywordMergerAgent  : A/B/C/D 4개 결과 통합 + 카테고리별 합의도 계산
   QueryBuilderAgent   : 카테고리별 OR 키워드 묶음 생성 + 길이 필터
-  StrategyAgent       : 합의도+비즈니스 점수로 카테고리 순위 결정
-                        → 전체 / 핵심5 / 정밀3 OR 전략 3개 생성
-  QueryFormatterAgent : 검색식 문자열 포맷팅 (OR 전용)
+  StrategyAgent       : and_groups 리스트로 5가지 전략 생성
+                        후보1 = 순수 OR (1그룹 전체)
+                        후보2~5 = AND 그룹별로 OR 키워드 묶음
+  QueryFormatterAgent : and_groups → 실제 검색식 문자열 포맷팅
+                        (A OR B) AND (C OR D) AND ...
   ValidatorAgent      : 복잡도·유효성 검증
   QueryCoordinator    : 5개 에이전트 오케스트레이션
 ================================================================
@@ -65,49 +68,26 @@ class ProcessLogger:
         })
 
     def save(self, out_dir: str = "report") -> tuple[str, str]:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """단일 아카이브 파일에 누적 저장 (타임스탬프 파일 생성 안 함)."""
         Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-        json_path = f"{out_dir}/process_log_{ts}.json"
+        archive_path = f"{out_dir}/process_log_archive.jsonl"
         payload = {
-            "version": self.VERSION,
-            "session": self.session_name,
-            "started_at": self.started_at,
-            "completed_at": datetime.now().isoformat(),
-            "total_events": len(self.events),
+            "version":        self.VERSION,
+            "session":        self.session_name,
+            "started_at":     self.started_at,
+            "completed_at":   datetime.now().isoformat(),
+            "total_events":   len(self.events),
             "total_decisions": len(self.decisions),
-            "events": self.events,
-            "decisions": self.decisions,
+            "events":         self.events,
+            "decisions":      self.decisions,
         }
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        # JSON Lines 형식으로 append (1 run = 1 line)
+        with open(archive_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-        txt_path = f"{out_dir}/process_log_{ts}.txt"
-        lines = [
-            f"{'='*70}",
-            f"  테스트 프로세스 기록",
-            f"  세션: {self.session_name}  |  버전: {self.VERSION}",
-            f"  시작: {self.started_at}",
-            f"  완료: {payload['completed_at']}",
-            f"{'='*70}",
-            "",
-            "[ 에이전트 실행 이벤트 ]",
-        ]
-        for e in self.events:
-            elapsed_str = f" ({e['elapsed_sec']}s)" if e["elapsed_sec"] else ""
-            lines.append(f"  {e['ts']}  [{e['agent']}]  {e['action']}{elapsed_str}")
-            if e["outputs"]:
-                lines.append(f"    출력: {e['outputs']}")
-        lines += ["", "[ 의사결정 기록 ]"]
-        for d in self.decisions:
-            lines.append(f"  [{d['agent']}]  {d['parameter']} = {d['value']}")
-            lines.append(f"    근거: {d['reasoning']}")
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-
-        print(f"\n  [ProcessLogger] JSON 저장 → {json_path}")
-        print(f"  [ProcessLogger] TXT  저장 → {txt_path}")
-        return json_path, txt_path
+        print(f"\n  [ProcessLogger] 로그 아카이브 → {archive_path}")
+        return archive_path, archive_path
 
 
 # ============================================================
@@ -246,18 +226,19 @@ class QueryBuilderAgent:
 class StrategyAgent:
     """
     역할  : 합의도 + 비즈니스 관련성 점수로 카테고리 순위 결정
-            → OR 3개 + AND 2개 = 총 5개 전략 생성
+            → 5개 전략 생성 (각 전략 = and_groups 리스트)
+    포맷  : and_groups 리스트
+      - 1개 그룹  → 순수 OR (kw1 OR kw2 OR ...)
+      - N개 그룹  → AND of OR  ((g1) AND (g2) AND ...)
     전략  :
-      후보1_OR_전체   : 모든 카테고리 키워드 OR (최대 수집)
-      후보2_OR_핵심   : 합의도+비즈니스 상위 5개 카테고리 OR
-      후보3_OR_정밀   : 합의도+비즈니스 상위 3개 카테고리 OR
-      후보4_AND_균형  : (에듀테크·AI 핵심) AND (교육정책 핵심)
-      후보5_AND_정밀  : (에듀테크·AI 핵심) AND (경쟁사 핵심)
-
-    AND 후보의 0건 방지: 각 AND 그룹은 ≤2단어 단어의 핵심 키워드만 사용.
+      후보1 : 전체 키워드 OR (기준선, 1 그룹)
+      후보2 : (AI챗봇·LMS·에듀테크) AND (교육부·RISE·글로컬·사업비)
+      후보3 : (AI챗봇·LMS·에듀테크) AND (유비온·자이닉스·메이크봇...)
+      후보4 : (AI챗봇·LMS·에듀테크) AND (정책+경쟁사+CTL 통합)
+      후보5 : (AI챗봇) AND (CTL) AND (교육부·RISE) — 트리플 AND
+    AND 그룹은 ≤2단어 핵심어만 사용 → 0건 방지
     """
 
-    # 비즈니스 관련성 우선순위 (도메인 지식 기반, 높을수록 핵심)
     BIZ_PRIORITY: dict[str, int] = {
         "AI·챗봇 기술":        10,
         "학습 플랫폼·에듀테크": 9,
@@ -268,54 +249,75 @@ class StrategyAgent:
         "대학 인사·행정":       3,
     }
 
-    # AND 전략에서 사용할 카테고리 조합 (카테고리명 직접 매칭, 인덱스 무관)
-    AND_COMBOS = [
+    # 후보2~5: AND 그룹 조합 정의 (카테고리명 직접 매칭)
+    AND_TEMPLATES: list[dict] = [
         {
-            "name": "후보4_AND_균형 (에듀테크×정책)",
+            "name": "후보2 (에듀테크·AI  AND  교육정책)",
             "groups": [
-                {
-                    "label":     "에듀테크·AI",
-                    "cat_names": ["AI·챗봇 기술", "학습 플랫폼·에듀테크"],
-                },
-                {
-                    "label":     "교육정책",
-                    "cat_names": ["정부 정책·사업비"],
-                },
+                {"label": "에듀테크·AI",
+                 "cat_names": ["AI·챗봇 기술", "학습 플랫폼·에듀테크"]},
+                {"label": "교육정책",
+                 "cat_names": ["정부 정책·사업비"]},
             ],
-            "description": "에듀테크·AI 핵심어 AND 교육정책 핵심어",
+            "description": "(AI챗봇·LMS·에듀테크 핵심) AND (교육부·RISE·글로컬·사업비 핵심)",
             "reasoning": (
-                "제품(AI챗봇·LMS)과 교육정책(교육부·RISE·글로컬)이 "
-                "동시 언급된 기사 수집. 정책 연계 비즈니스 기회 탐색에 적합. "
-                "각 AND 그룹은 ≤2단어 핵심어만 사용 → 0건 방지."
+                "에듀테크 제품과 교육정책이 동시 언급된 기사 수집. "
+                "정책 연계 비즈니스 기회 탐색에 적합."
             ),
         },
         {
-            "name": "후보5_AND_정밀 (에듀테크×경쟁사)",
+            "name": "후보3 (에듀테크·AI  AND  경쟁사)",
             "groups": [
-                {
-                    "label":     "에듀테크·AI",
-                    "cat_names": ["AI·챗봇 기술", "학습 플랫폼·에듀테크"],
-                },
-                {
-                    "label":     "경쟁사",
-                    "cat_names": ["에듀테크 경쟁사"],
-                },
+                {"label": "에듀테크·AI",
+                 "cat_names": ["AI·챗봇 기술", "학습 플랫폼·에듀테크"]},
+                {"label": "경쟁사",
+                 "cat_names": ["에듀테크 경쟁사"]},
             ],
-            "description": "에듀테크·AI 핵심어 AND 경쟁사 핵심어",
+            "description": "(AI챗봇·LMS·에듀테크 핵심) AND (유비온·자이닉스·메이크봇... 핵심)",
             "reasoning": (
-                "제품(AI챗봇·LMS)과 경쟁사가 함께 등장하는 기사 수집. "
-                "시장 비교·경쟁 동향 파악에 특화. "
-                "각 AND 그룹은 ≤2단어 핵심어만 사용 → 0건 방지."
+                "에듀테크 시장에서 경쟁사가 함께 언급되는 기사 수집. "
+                "경쟁 동향·시장 비교 파악에 특화."
+            ),
+        },
+        {
+            "name": "후보4 (에듀테크·AI  AND  정책+경쟁사+CTL 통합)",
+            "groups": [
+                {"label": "에듀테크·AI",
+                 "cat_names": ["AI·챗봇 기술", "학습 플랫폼·에듀테크"]},
+                {"label": "정책·경쟁·CTL",
+                 "cat_names": ["정부 정책·사업비", "에듀테크 경쟁사",
+                               "CTL·교수학습센터"]},
+            ],
+            "description": "(AI챗봇·LMS·에듀테크 핵심) AND (교육부·RISE·유비온·CTL... 통합 핵심)",
+            "reasoning": (
+                "에듀테크 핵심어와 정책·경쟁사·CTL 중 하나 이상이 함께 등장. "
+                "균형 잡힌 커버리지, 일상 AND 모니터링 권장."
+            ),
+        },
+        {
+            "name": "후보5 (AI챗봇  AND  CTL  AND  교육정책) — 트리플 AND",
+            "groups": [
+                {"label": "AI챗봇",
+                 "cat_names": ["AI·챗봇 기술"]},
+                {"label": "CTL",
+                 "cat_names": ["CTL·교수학습센터"]},
+                {"label": "교육정책",
+                 "cat_names": ["정부 정책·사업비"]},
+            ],
+            "description": "(AI챗봇 핵심) AND (CTL·KACTL 핵심) AND (교육부·RISE·글로컬 핵심)",
+            "reasoning": (
+                "AI챗봇·CTL·교육정책 세 가지가 동시 등장. "
+                "가장 좁고 정밀한 타겟. 건수 적을 경우 후보2·3으로 확장."
             ),
         },
     ]
 
     @staticmethod
-    def _simplify_for_and(kws: list[str], max_words: int = 2,
-                          max_n: int = 6) -> list[str]:
-        """AND 그룹용 단순화: ≤max_words 단어 키워드만, 짧은 것(범용) 우선, 최대 max_n개"""
+    def _simplify(kws: list[str], max_words: int = 2,
+                  max_n: int = 6) -> list[str]:
+        """AND 그룹용: ≤max_words 단어, 짧은 것(범용) 우선, max_n개"""
         short = [k for k in kws if len(k.split()) <= max_words]
-        short.sort(key=lambda k: (len(k.split()), len(k)))   # 단어수 → 글자수 오름차순
+        short.sort(key=lambda k: (len(k.split()), len(k)))
         return short[:max_n] if short else sorted(kws, key=len)[:max_n]
 
     def run(self, assigned: dict, consensus_scores: dict,
@@ -323,91 +325,57 @@ class StrategyAgent:
         t0 = time.time()
 
         max_prio = max(self.BIZ_PRIORITY.values()) if self.BIZ_PRIORITY else 10
-
-        # ── 카테고리별 최종 점수 = 비즈니스 우선순위 70% + 합의도 30% ──
         cat_scores: dict[str, float] = {}
         for cat in assigned:
-            prio  = self.BIZ_PRIORITY.get(cat, 2)
-            cons  = consensus_scores.get(cat, 0.0)
+            prio = self.BIZ_PRIORITY.get(cat, 2)
+            cons = consensus_scores.get(cat, 0.0)
             cat_scores[cat] = (prio / max_prio) * 0.7 + cons * 0.3
-
         ranked = sorted(cat_scores, key=lambda c: -cat_scores[c])
 
-        # ── OR 전략 3개 ────────────────────────────────────────────
-        top5 = ranked[:5]
-        top3 = ranked[:3]
+        strategies: dict[str, dict] = {}
 
-        strategies: dict[str, dict] = {
-            "후보1_OR_전체 (최대 수집)": {
-                "type": "OR",
-                "cats": ranked,
-                "or_groups": {c: or_groups[c] for c in ranked if c in or_groups},
-                "description": "A/B/C/D 4개 방법 통합 키워드 전체 OR — 최대 수집",
-                "reasoning": (
-                    "4개 방법의 모든 키워드를 포함하여 누락(FN) 최소화. "
-                    "일일 뉴스 건수 파악 및 임계값 설정에 적합."
-                ),
-            },
-            "후보2_OR_핵심 (비즈니스 핵심)": {
-                "type": "OR",
-                "cats": top5,
-                "or_groups": {c: or_groups[c] for c in top5 if c in or_groups},
-                "description": (
-                    f"합의도+비즈니스 점수 상위 5개 카테고리 OR "
-                    f"({' | '.join(top5)})"
-                ),
-                "reasoning": (
-                    "카테고리 점수 = 비즈니스 관련성 70% + 합의도 30%. "
-                    "하위 카테고리 제외로 잡음 감소. 일상 모니터링 권장."
-                ),
-            },
-            "후보3_OR_정밀 (제품집중)": {
-                "type": "OR",
-                "cats": top3,
-                "or_groups": {c: or_groups[c] for c in top3 if c in or_groups},
-                "description": (
-                    f"합의도+비즈니스 점수 상위 3개 카테고리 OR "
-                    f"({' | '.join(top3)})"
-                ),
-                "reasoning": (
-                    "제품 직접 관련 상위 3개 카테고리. 고관련도 기사 정밀 수집."
-                ),
-            },
+        # ── 후보1: 전체 OR (and_groups 1개 = 순수 OR) ─────────────
+        all_kws: list[str] = []
+        for cat in ranked:
+            all_kws.extend(or_groups.get(cat, []))
+        strategies["후보1 (전체 OR, 최대 수집)"] = {
+            "and_groups": [{"label": "전체", "cats": list(ranked),
+                            "keywords": all_kws}],
+            "cats": list(ranked),
+            "description": "A/B/C/D 통합 키워드 전체 OR — 최대 recall 기준선",
+            "reasoning": (
+                "모든 키워드를 OR로 묶어 누락(FN) 최소화. "
+                "일일 뉴스 건수 파악·임계값 설정 기준선으로 사용."
+            ),
         }
 
-        # ── AND 전략 2개 (카테고리명 직접 매칭) ────────────────────
-        for combo in self.AND_COMBOS:
+        # ── 후보2~5: AND 템플릿 기반 혼합 쿼리 ─────────────────────
+        for tmpl in self.AND_TEMPLATES:
             and_groups_built: list[dict] = []
             all_cats_used: list[str] = []
-
-            for grp in combo["groups"]:
+            for grp in tmpl["groups"]:
                 merged_kws: list[str] = []
                 cats_in_grp: list[str] = []
-                # cat_names 로 or_groups 에서 직접 조회
                 for cat_name in grp["cat_names"]:
                     if cat_name in or_groups:
                         cats_in_grp.append(cat_name)
                         all_cats_used.append(cat_name)
                         merged_kws.extend(or_groups[cat_name])
-
-                simplified = self._simplify_for_and(merged_kws)
+                simplified = self._simplify(merged_kws)
                 and_groups_built.append({
                     "label":    grp["label"],
                     "cats":     cats_in_grp,
                     "keywords": simplified,
                 })
-
-            strategies[combo["name"]] = {
-                "type":        "AND",
-                "cats":        all_cats_used,
+            strategies[tmpl["name"]] = {
                 "and_groups":  and_groups_built,
-                "description": combo["description"],
-                "reasoning":   combo["reasoning"],
+                "cats":        all_cats_used,
+                "description": tmpl["description"],
+                "reasoning":   tmpl["reasoning"],
             }
 
         elapsed = time.time() - t0
 
-        # ── 로깅 ────────────────────────────────────────────────────
         for cat in ranked:
             logger.record_decision(
                 agent="StrategyAgent",
@@ -419,12 +387,12 @@ class StrategyAgent:
                     f"최종점수={cat_scores[cat]:.3f}"
                 ),
             )
-
         logger.record(
             agent="StrategyAgent",
-            action="OR 3개 + AND 2개 = 총 5개 전략 결정",
+            action="OR+AND 혼합 5개 전략 결정 (후보1=순수OR, 후보2~5=AND그룹)",
             inputs={"n_categories": len(assigned), "ranked_categories": ranked},
-            outputs={"OR후보": 3, "AND후보": 2, "total": len(strategies)},
+            outputs={"total_strategies": len(strategies),
+                     "pure_or": 1, "and_mixed": len(strategies) - 1},
             elapsed=elapsed,
         )
         return strategies
@@ -436,9 +404,10 @@ class StrategyAgent:
 
 class QueryFormatterAgent:
     """
-    역할  : 전략 딕셔너리를 실제 검색식 문자열로 포맷팅
-    지원  : OR 전용 (type=OR) / AND+OR 조합 (type=AND)
-    AND 포맷: (kw1 OR kw2 ...) AND (kw3 OR kw4 ...)
+    역할  : and_groups 리스트 → 실제 검색식 문자열 포맷팅
+    포맷  :
+      - 1 그룹  : kw1 OR kw2 OR ...           (순수 OR)
+      - N 그룹  : (g1) AND (g2) AND ...        (OR+AND 혼합)
     출력  : strategy_name → {query, and_count, or_count, kw_count, ...}
     """
 
@@ -447,27 +416,25 @@ class QueryFormatterAgent:
         formatted: dict[str, dict] = {}
 
         for name, strat in strategies.items():
-            if strat["type"] == "OR":
-                # ── 순수 OR ──────────────────────────────────────
-                all_kws: list[str] = []
-                for kws in strat["or_groups"].values():
-                    all_kws.extend(kws)
-                query = " OR ".join(all_kws)
-                and_count = 0
+            groups = strat["and_groups"]
 
+            if len(groups) == 1:
+                # ── 순수 OR (후보1) ───────────────────────────────
+                query     = " OR ".join(groups[0]["keywords"])
+                and_count = 0
             else:
-                # ── AND + 내부 OR 그룹 ────────────────────────────
+                # ── (OR그룹) AND (OR그룹) AND ... ─────────────────
                 parts: list[str] = []
-                for grp in strat["and_groups"]:
+                for grp in groups:
                     kws = grp["keywords"]
                     if not kws:
                         continue
-                    if len(kws) == 1:
-                        parts.append(kws[0])
-                    else:
-                        parts.append("(" + " OR ".join(kws) + ")")
+                    parts.append(
+                        kws[0] if len(kws) == 1
+                        else "(" + " OR ".join(kws) + ")"
+                    )
                 query     = " AND ".join(parts)
-                and_count = query.count(" AND ")
+                and_count = len(parts) - 1
 
             or_count = query.count(" OR ")
             kw_count = or_count + and_count + 1 if query else 0
@@ -477,20 +444,21 @@ class QueryFormatterAgent:
                 "kw_count":    kw_count,
                 "and_count":   and_count,
                 "or_count":    or_count,
-                "type":        strat["type"],
-                "cats_used":   strat["cats"],
+                "n_groups":    len(groups),
+                "cats_used":   strat.get("cats", []),
                 "description": strat["description"],
                 "reasoning":   strat["reasoning"],
             }
 
         elapsed = time.time() - t0
+        pure_or  = sum(1 for q in formatted.values() if q["and_count"] == 0)
+        and_mix  = len(formatted) - pure_or
         logger.record(
             agent="QueryFormatterAgent",
-            action="OR/AND 혼합 검색식 문자열 포맷팅",
+            action="OR+AND 혼합 검색식 5개 포맷팅",
             inputs={"n_strategies": len(strategies)},
             outputs={"n_queries": len(formatted),
-                     "or_only": sum(1 for s in strategies.values() if s["type"] == "OR"),
-                     "and_mixed": sum(1 for s in strategies.values() if s["type"] == "AND")},
+                     "pure_or": pure_or, "and_mixed": and_mix},
             elapsed=elapsed,
         )
         return formatted
@@ -503,13 +471,13 @@ class QueryFormatterAgent:
 class ValidatorAgent:
     """
     역할  : 검색식 유효성·복잡도 검증
-    기준  : OR 전용 → 키워드 수 ≤ 100
-            AND 포함 → AND 그룹당 키워드 ≤ 6, 전체 키워드 ≤ 30
+    기준  : 순수 OR → 키워드 수 ≤ 100 (50개 초과 시 경고)
+            AND 혼합 → 전체 키워드 수 ≤ 30
     """
 
     MAX_KW_OR  = 100
-    MAX_KW_AND = 30
     WARN_OR    = 50
+    MAX_KW_AND = 30
 
     def run(self, queries: dict, logger: ProcessLogger) -> dict:
         validated: dict[str, dict] = {}
@@ -517,41 +485,38 @@ class ValidatorAgent:
         for name, q in queries.items():
             issues   = []
             warnings = []
-            qtype    = q.get("type", "OR")
 
             if q["kw_count"] == 0:
                 issues.append("검색식이 비어 있음")
-            elif qtype == "OR":
+            elif q["and_count"] == 0:          # 순수 OR
                 if q["kw_count"] > self.MAX_KW_OR:
                     issues.append(f"키워드 {q['kw_count']}개 > 권장 {self.MAX_KW_OR}개")
-                if q["kw_count"] > self.WARN_OR:
+                elif q["kw_count"] > self.WARN_OR:
                     warnings.append(f"키워드 {q['kw_count']}개: 결과 과다 주의")
-            else:  # AND
+            else:                              # AND 혼합
                 if q["kw_count"] > self.MAX_KW_AND:
                     warnings.append(
                         f"AND 검색식 키워드 {q['kw_count']}개 > 권장 {self.MAX_KW_AND}개"
                     )
-                if q["and_count"] == 0:
-                    issues.append("AND 전략인데 AND 연산자 없음")
 
             status = "PASS" if not issues else "FAIL"
             validated[name] = {**q, "status": status,
                                 "issues": issues, "warnings": warnings}
 
+            and_label = f"AND{q['and_count']}" if q["and_count"] else "순수OR"
             logger.record_decision(
                 agent="ValidatorAgent",
                 parameter=f"검증: {name}",
                 value=status,
                 reasoning=(
-                    f"type={qtype}, kw={q['kw_count']}, "
-                    f"AND={q['and_count']}, OR={q['or_count']}. "
+                    f"{and_label}, kw={q['kw_count']}, OR={q['or_count']}. "
                     + ("; ".join(issues + warnings) or "이상 없음")
                 ),
             )
 
         logger.record(
             agent="ValidatorAgent",
-            action="검색식 유효성 검증 (OR/AND 혼합)",
+            action="검색식 유효성 검증",
             inputs={"n_queries": len(queries)},
             outputs={
                 "passed": sum(1 for r in validated.values() if r["status"] == "PASS"),
@@ -593,13 +558,13 @@ class QueryCoordinator:
         or_groups = self.builder.run(assigned, logger)
         print(f"    → {len(or_groups)}개 OR 그룹 생성")
 
-        print("  [Agent 2] StrategyAgent: OR 3개 + AND 2개 = 총 5개 전략 결정 중...")
+        print("  [Agent 2] StrategyAgent: OR+AND 혼합 5개 전략 결정 중...")
         strategies = self.strategist.run(assigned, consensus_scores, or_groups, logger)
-        or_n  = sum(1 for s in strategies.values() if s["type"] == "OR")
-        and_n = sum(1 for s in strategies.values() if s["type"] == "AND")
-        print(f"    → {len(strategies)}개 전략 확정 (OR={or_n}, AND={and_n})")
+        pure_or = sum(1 for s in strategies.values() if len(s["and_groups"]) == 1)
+        and_mix = len(strategies) - pure_or
+        print(f"    → {len(strategies)}개 전략 확정 (순수OR={pure_or}, AND혼합={and_mix})")
 
-        print("  [Agent 3] QueryFormatterAgent: 검색식 문자열 포맷팅 중...")
+        print("  [Agent 3] QueryFormatterAgent: OR+AND 혼합 검색식 포맷팅 중...")
         formatted = self.formatter.run(strategies, logger)
         print(f"    → {len(formatted)}개 검색식 생성")
 
@@ -618,22 +583,23 @@ class QueryCoordinator:
 # ============================================================
 
 def save_query_candidates(validated: dict, out_dir: str = "report") -> str:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    """단일 아카이브 파일에 누적 저장 (타임스탬프 파일 생성 안 함)."""
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    path = f"{out_dir}/phase6_query_candidates_{ts}.txt"
+    archive_path = f"{out_dir}/query_candidates_archive.txt"
+    run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     lines = [
+        "",
         "=" * 70,
-        "  Phase 6: 최종 검색식 후보 5개 (OR 3개 + AND 2개)",
-        f"  생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"  [RUN {run_ts}]  Phase 6: OR+AND 혼합 검색식 후보 5개",
         "=" * 70,
         "",
     ]
     for name, q in validated.items():
-        warn_str = ("  경고: " + "; ".join(q["warnings"])) if q["warnings"] else ""
-        qtype    = q.get("type", "OR")
+        warn_str  = ("  경고: " + "; ".join(q["warnings"])) if q["warnings"] else ""
+        and_label = f"AND {q['and_count']}개 포함" if q["and_count"] else "순수 OR"
         lines += [
-            f"【{name}】  [{qtype}]",
+            f"【{name}】  [{and_label}]",
             f"  설명  : {q['description']}",
             f"  상태  : {q['status']}{warn_str}",
             f"  통계  : 키워드 {q['kw_count']}개 | OR {q['or_count']}개 | AND {q['and_count']}개",
@@ -642,54 +608,48 @@ def save_query_candidates(validated: dict, out_dir: str = "report") -> str:
             f"  검색식:",
             f"    {q['query']}",
             "",
-            f"  선택 근거:",
-            f"    {q['reasoning']}",
+            f"  근거: {q['reasoning']}",
             "",
             "-" * 70,
         ]
 
     lines += [
         "",
-        "[ 빅카인즈 사용 권장 순서 ]",
-        "  [OR 후보]",
-        "  1단계: 후보2_OR_핵심 으로 1주일 수집 → 일평균 건수 확인",
-        "  2단계: 건수 부족(< 5건/일) → 후보1_OR_전체 전환",
-        "         건수 과다(> 50건/일) → 후보3_OR_정밀 전환",
-        "  [AND 후보]",
-        "  정책 연계 기사 탐색 → 후보4_AND_균형",
-        "  경쟁사 언급 기사 탐색 → 후보5_AND_정밀",
-        "  3단계: 2주 운영 후 Phase 5 메트릭(Precision/Recall) 평가",
+        "[ 빅카인즈 사용 권장 ]",
+        "  기준선 파악   : 후보1 (전체 OR) 으로 1주일 수집 → 일평균 건수 확인",
+        "  정책 연계     : 후보2 (에듀테크 AND 정책)",
+        "  경쟁사 동향   : 후보3 (에듀테크 AND 경쟁사)",
+        "  균형 모니터링 : 후보4 (에듀테크 AND 정책+경쟁사+CTL)",
+        "  정밀 타겟     : 후보5 (AI챗봇 AND CTL AND 정책) — 트리플 AND",
+        "  2주 운영 후 Phase 5 메트릭(Precision/Recall) 평가",
     ]
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    with open(archive_path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
 
-    print(f"\n  [Phase 6] 검색식 후보 저장 → {path}")
-    return path
+    print(f"\n  [Phase 6] 검색식 아카이브 누적 → {archive_path}")
+    return archive_path
 
 
 def print_query_candidates(validated: dict):
     print("\n" + "=" * 70)
-    print("  Phase 6 결과: 최종 검색식 후보 5개 (OR 3개 + AND 2개)")
+    print("  Phase 6: OR+AND 혼합 검색식 후보 5개")
     print("=" * 70)
 
     for name, q in validated.items():
         status_mark = "✓" if q["status"] == "PASS" else "✗"
         warn_str    = f"  ⚠ {'; '.join(q['warnings'])}" if q["warnings"] else ""
-        qtype       = q.get("type", "OR")
-        print(f"\n【{name}】  [{qtype}]  {status_mark}{warn_str}")
-        print(f"  설명      : {q['description']}")
-        print(f"  카테고리  : {' > '.join(q['cats_used'])}")
-        print(f"  통계      : OR={q['or_count']}개 / AND={q['and_count']}개 / 총={q['kw_count']}개")
-        print(f"  검색식    : {q['query']}")
-        print(f"  근거      : {q['reasoning'][:90]}...")
+        and_label   = f"AND{q['and_count']}" if q["and_count"] else "순수OR"
+        print(f"\n【{name}】  [{and_label}]  {status_mark}{warn_str}")
+        print(f"  설명   : {q['description']}")
+        print(f"  통계   : OR={q['or_count']}개 | AND={q['and_count']}개 | 총={q['kw_count']}개")
+        print(f"  검색식 : {q['query']}")
+        print(f"  근거   : {q['reasoning'][:85]}...")
 
     print("\n" + "=" * 70)
-    print("  빅카인즈 사용 권장 순서")
+    print("  빅카인즈 권장 순서")
     print("=" * 70)
-    print("  [OR] 후보2_OR_핵심 → 1주일 수집, 일평균 건수 확인")
-    print("       < 5건/일 → 후보1_OR_전체  |  > 50건/일 → 후보3_OR_정밀")
-    print("  [AND] 후보4(정책×에듀테크) / 후보5(경쟁사×에듀테크) → 목적별 선택")
+    print("  기준선→후보1 | 정책→후보2 | 경쟁사→후보3 | 균형→후보4 | 정밀→후보5")
     print("  2주 운영 후 Phase 5 메트릭 평가")
 
 

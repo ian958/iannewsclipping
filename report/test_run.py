@@ -10,6 +10,7 @@
 ================================================================
 """
 
+import os
 import time
 import numpy as np
 from sklearn.cluster import KMeans
@@ -631,10 +632,11 @@ if __name__ == "__main__":
 
     validated = run_phase6(r_a, r_b, r_c, r_d, logger)
     print_query_candidates(validated)
-    save_query_candidates(validated, out_dir=".")      # report/ 기준 현재 디렉토리
+    _dir = os.path.dirname(os.path.abspath(__file__))
+    save_query_candidates(validated, out_dir=_dir)
 
     # ── 전체 프로세스 로그 저장 ────────────────────────────
     logger.record("Main", "전체 파이프라인 완료",
                   outputs={"phases_run": ["A", "B", "C", "D", "Phase6"],
                            "query_candidates": len(validated)})
-    logger.save(out_dir=".")                           # report/ 기준 현재 디렉토리
+    logger.save(out_dir=_dir)

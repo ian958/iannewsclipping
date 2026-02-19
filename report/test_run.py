@@ -19,6 +19,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 
+# Phase 6: 검색식 생성 (AND/OR 쿼리 빌더 + ProcessLogger)
+from phase6_query_builder import (
+    ProcessLogger,
+    run_phase6,
+    print_query_candidates,
+    save_query_candidates,
+)
+
 # ============================================================
 # 공통 키워드 데이터
 # ============================================================
@@ -519,30 +527,113 @@ def print_detail(result):
 # ============================================================
 
 if __name__ == "__main__":
+    # ── 프로세스 로거 초기화 ────────────────────────────────
+    logger = ProcessLogger("keyword_search_design")
+    logger.record("Main", "테스트 파이프라인 시작",
+                  inputs={"total_keywords": len(KEYWORDS)})
+
     print(f"입력 키워드: {len(KEYWORDS)}개\n")
     print("각 방법론 실행 중...\n")
 
     results = []
 
+    # ── 방법 A ─────────────────────────────────────────────
     print("[방법 A] K-means + Elbow Method 실행 중...")
-    results.append(method_a(KEYWORDS))
-    print(f"  → 완료: {results[-1]['n_clusters']}개 클러스터, {results[-1]['elapsed']:.2f}초")
+    r_a = method_a(KEYWORDS)
+    results.append(r_a)
+    logger.record(
+        agent="Method A (K-means)",
+        action="클러스터링 완료",
+        inputs={"n_keywords": len(KEYWORDS)},
+        outputs={"n_clusters": r_a["n_clusters"], "param": r_a["param"]},
+        elapsed=r_a["elapsed"],
+    )
+    logger.record_decision(
+        agent="Method A",
+        parameter="최적 k",
+        value=str(r_a["n_clusters"]),
+        reasoning=f"Silhouette 최대화 자동 결정. {r_a['param']}",
+    )
+    print(f"  → 완료: {r_a['n_clusters']}개 클러스터, {r_a['elapsed']:.2f}초")
 
+    # ── 방법 B ─────────────────────────────────────────────
     print("[방법 B] BERT 임베딩 + 코사인 유사도 실행 중...")
-    results.append(method_b(KEYWORDS))
-    print(f"  → 완료: {results[-1]['n_clusters']}개 그룹, {results[-1]['elapsed']:.2f}초")
+    r_b = method_b(KEYWORDS)
+    results.append(r_b)
+    logger.record(
+        agent="Method B (BERT)",
+        action="클러스터링 완료",
+        inputs={"n_keywords": len(KEYWORDS)},
+        outputs={"n_clusters": r_b["n_clusters"], "param": r_b["param"]},
+        elapsed=r_b["elapsed"],
+    )
+    logger.record_decision(
+        agent="Method B",
+        parameter="임계값·k",
+        value=str(r_b["n_clusters"]),
+        reasoning=f"{r_b['decision']}. {r_b['param']}",
+    )
+    print(f"  → 완료: {r_b['n_clusters']}개 그룹, {r_b['elapsed']:.2f}초")
 
+    # ── 방법 C ─────────────────────────────────────────────
     print("[방법 C] 서브에이전트 시스템 실행 중...")
-    results.append(method_c(KEYWORDS))
-    print(f"  → 완료: {results[-1]['n_clusters']}개 그룹, {results[-1]['elapsed']:.2f}초")
+    r_c = method_c(KEYWORDS)
+    results.append(r_c)
+    logger.record(
+        agent="Method C (Subagent)",
+        action="멀티에이전트 파이프라인 완료",
+        inputs={"n_keywords": len(KEYWORDS)},
+        outputs={"n_clusters": r_c["n_clusters"],
+                 "agent_log_lines": len(r_c.get("log", []))},
+        elapsed=r_c["elapsed"],
+    )
+    for line in r_c.get("log", []):
+        logger.record_decision(
+            agent="Method C",
+            parameter="에이전트 로그",
+            value=line,
+            reasoning="SubagentCoordinator 내부 실행 단계",
+        )
+    print(f"  → 완료: {r_c['n_clusters']}개 그룹, {r_c['elapsed']:.2f}초")
 
+    # ── 방법 D ─────────────────────────────────────────────
     print("[방법 D] LLM 단독 시뮬레이션 실행 중...")
-    results.append(method_d(KEYWORDS))
-    print(f"  → 완료: {results[-1]['n_clusters']}개 카테고리, {results[-1]['elapsed']:.2f}초")
+    r_d = method_d(KEYWORDS)
+    results.append(r_d)
+    logger.record(
+        agent="Method D (LLM)",
+        action="의미 카테고리 분류 완료",
+        inputs={"n_keywords": len(KEYWORDS)},
+        outputs={"n_clusters": r_d["n_clusters"],
+                 "categories": r_d.get("cat_labels", [])},
+        elapsed=r_d["elapsed"],
+    )
+    logger.record_decision(
+        agent="Method D",
+        parameter="카테고리 체계",
+        value=str(r_d.get("cat_labels", [])),
+        reasoning=f"{r_d['param']}. 의미론적 맥락 기반 단일 패스 분류.",
+    )
+    print(f"  → 완료: {r_d['n_clusters']}개 카테고리, {r_d['elapsed']:.2f}초")
 
-    # 요약 비교표
+    # ── 요약 비교표 + 상세 결과 ────────────────────────────
     print_comparison_table(results)
-
-    # 각 방법 상세 결과
     for r in results:
         print_detail(r)
+
+    # ── Phase 6: 검색식 생성 (Subagent 기반) ───────────────
+    print("\n\n" + "=" * 70)
+    print("  Phase 6: 검색식 생성 (AND/OR 쿼리 빌더 서브에이전트)")
+    print("=" * 70)
+    print("  입력: Method D 의미 카테고리 (가장 명확한 라벨 보유)")
+    print("  목표: 빅카인즈용 최종 검색식 후보 3개 생성\n")
+
+    validated = run_phase6(r_d, logger)
+    print_query_candidates(validated)
+    save_query_candidates(validated)
+
+    # ── 전체 프로세스 로그 저장 ────────────────────────────
+    logger.record("Main", "전체 파이프라인 완료",
+                  outputs={"phases_run": ["A", "B", "C", "D", "Phase6"],
+                           "query_candidates": len(validated)})
+    logger.save()

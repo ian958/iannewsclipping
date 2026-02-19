@@ -97,7 +97,8 @@ def method_a(keywords):
 
     _, X = tfidf_matrix(keywords)
     n = len(keywords)
-    k_range = range(2, max(3, int(np.sqrt(n)) + 1))
+    # 탐색 범위 확대: 2 ~ min(15, n//2)
+    k_range = range(2, min(16, n // 2 + 1))
 
     inertias, sil_scores = [], []
     for k in k_range:
@@ -106,12 +107,9 @@ def method_a(keywords):
         inertias.append(km.inertia_)
         sil_scores.append(silhouette_score(X, km.labels_))
 
-    # Elbow: 2차 미분 최대
-    if len(inertias) >= 3:
-        acc = np.diff(np.diff(inertias))
-        optimal_k = list(k_range)[int(np.argmax(np.abs(acc))) + 2]
-    else:
-        optimal_k = list(k_range)[int(np.argmax(sil_scores))]
+    # Silhouette 최대 k 선택 (의미론적 품질 우선)
+    optimal_k = list(k_range)[int(np.argmax(sil_scores))]
+    best_sil = max(sil_scores)
 
     km_final = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
     labels = km_final.fit_predict(X)
@@ -120,13 +118,14 @@ def method_a(keywords):
     clusters = build_cluster_dict(keywords, labels)
     return {
         "method": "A. K-means",
-        "decision": "Elbow Method 자동",
+        "decision": "Silhouette 최대화 자동",
         "n_clusters": optimal_k,
         "elapsed": elapsed,
         "clusters": clusters,
-        "param": f"k={optimal_k} (Elbow 자동)",
+        "param": f"k={optimal_k} (Silhouette={best_sil:.3f} 최대, 범위 2~{max(k_range)})",
         "pros": "완전 자동, 재현 가능",
         "cons": "의미론적 유사도 한계",
+        "sil_scores": dict(zip(k_range, sil_scores)),
     }
 
 
@@ -162,34 +161,43 @@ def method_b(keywords):
         sim_matrix = cosine_similarity(X)
         mode = "시뮬레이션(TF-IDF 대체)"
 
-    # 유사도 분포 → 75 percentile 임계값 자동 제안
-    flat = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
-    threshold = float(np.percentile(flat, 75))
+    # 비영(非零) 유사도만 추출 → 분포 왜곡 보정
+    flat_all = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+    nonzero = flat_all[flat_all > 0.01]  # 노이즈 플로어 제거
 
-    # 임계값 기반 그리디 그룹핑
-    assigned = set()
-    groups = []
-    for i in range(len(keywords)):
-        if i in assigned:
-            continue
-        grp = [i]
-        assigned.add(i)
-        for j in range(i + 1, len(keywords)):
-            if j not in assigned and sim_matrix[i, j] >= threshold:
-                grp.append(j)
-                assigned.add(j)
-        groups.append(grp)
+    if len(nonzero) > 10:
+        # 비영 유사도의 중앙값을 임계값으로 사용 (과분할 방지)
+        threshold = float(np.percentile(nonzero, 50))
+    else:
+        threshold = 0.05  # fallback
 
-    clusters = {i: [keywords[idx] for idx in grp] for i, grp in enumerate(groups)}
+    # Ward 계층적 클러스터링 + Silhouette 최대화로 최적 k 결정
+    dist_matrix = 1 - np.clip(sim_matrix, 0, 1)
+    np.fill_diagonal(dist_matrix, 0)
+    Z = linkage(squareform(dist_matrix), method="ward")
+
+    n = len(keywords)
+    k_range = range(2, min(16, n // 2 + 1))
+    sil_scores = []
+    for k in k_range:
+        lbs = fcluster(Z, k, criterion="maxclust")
+        sil_scores.append(silhouette_score(dist_matrix, lbs, metric="precomputed"
+                                           ) if len(set(lbs)) > 1 else 0)
+
+    optimal_k = list(k_range)[int(np.argmax(sil_scores))]
+    best_sil = max(sil_scores)
+    labels = fcluster(Z, optimal_k, criterion="maxclust")
+
+    clusters = build_cluster_dict(keywords, labels)
     elapsed = time.time() - start
 
     return {
         "method": "B. BERT 임베딩",
-        "decision": f"분포 분석 자동 ({mode})",
-        "n_clusters": len(clusters),
+        "decision": f"Silhouette 최대화 ({mode})",
+        "n_clusters": optimal_k,
         "elapsed": elapsed,
         "clusters": clusters,
-        "param": f"임계값={threshold:.3f} (75 percentile 자동)",
+        "param": f"k={optimal_k} (Silhouette={best_sil:.3f}, 비영 임계={threshold:.3f})",
         "pros": "의미론적 유사도 포착",
         "cons": f"모델 설치 필요 ({mode})",
     }
@@ -200,24 +208,28 @@ def method_b(keywords):
 # ============================================================
 
 class CategorizerAgent:
-    """Agent 1: TF-IDF 기반 초기 카테고리 분류"""
+    """Agent 1: TF-IDF + Silhouette 최대화로 최적 k 자동 결정"""
 
     def run(self, keywords):
         _, X = tfidf_matrix(keywords)
         sim = cosine_similarity(X)
-        # Dendrogram으로 자동 클러스터 수 결정
         dist = 1 - np.clip(sim, 0, 1)
         np.fill_diagonal(dist, 0)
         Z = linkage(squareform(dist), method="ward")
-        last = Z[-min(15, len(keywords)-1):, 2]
-        if len(last) >= 3:
-            acc = np.diff(last, 2)
-            cut = int(np.argmax(np.abs(acc))) + 2
-            k = max(1, len(last) - cut + 1)
-        else:
-            k = max(2, len(keywords) // 5)
-        labels = fcluster(Z, k, criterion="maxclust")
-        return build_cluster_dict(keywords, labels), sim, k
+
+        n = len(keywords)
+        # Silhouette 최대화로 k 자동 결정 (범위 5~12: 의미 있는 카테고리 수)
+        k_range = range(5, min(13, n // 4 + 1))
+        sil_scores = []
+        for k in k_range:
+            lbs = fcluster(Z, k, criterion="maxclust")
+            sil_scores.append(
+                silhouette_score(dist, lbs, metric="precomputed")
+                if len(set(lbs)) > 1 else 0
+            )
+        best_k = list(k_range)[int(np.argmax(sil_scores))]
+        labels = fcluster(Z, best_k, criterion="maxclust")
+        return build_cluster_dict(keywords, labels), sim, best_k
 
 
 class FilterAgent:
@@ -246,15 +258,18 @@ class FilterAgent:
 class SynthesizerAgent:
     """Agent 3: 각 클러스터 대표 키워드 선정 + 라벨링"""
 
+    # 우선순위 순서로 매칭 (앞쪽 카테고리가 우선)
     CATEGORY_HINTS = {
-        "AI/챗봇": ["챗봇", "AI", "LLM", "어드바이저", "상담"],
-        "플랫폼/LMS": ["LMS", "LXP", "학습관리", "에듀테크", "소프트랩"],
-        "정책/사업": ["교육부", "RISE", "글로컬", "혁신지원", "LINC", "사업비", "예산", "지원금"],
-        "대학/기관": ["대학교", "대학원", "대학", "카이스트", "연세", "한양", "서울대"],
-        "CTL/교수학습": ["CTL", "KACTL", "교수학습", "교육혁신", "역량 강화"],
-        "경쟁사": ["유비온", "자이닉스", "메디오피아", "프리윌린", "엘리스", "메이크봇",
-                  "로이드케이", "아이맥스", "와이즈넛", "마인드로직"],
-        "입학제도": ["무전공", "자율전공", "선출", "선임", "인사"],
+        "경쟁사":     ["유비온", "자이닉스", "메디오피아", "프리윌린", "엘리스그룹",
+                      "메이크봇", "로이드케이", "아이맥스소프트", "와이즈넛", "마인드로직"],
+        "CTL/교수학습": ["CTL", "KACTL", "교수학습", "교육혁신", "역량 강화", "K-MEDI",
+                       "디지털혁신", "소프트랩", "커뮤니티교육"],
+        "AI/챗봇":    ["AI 챗봇", "챗봇", "AI 상담", "학습 AI", "AI 어드바이저", "AI 학사"],
+        "플랫폼/LMS": ["LMS", "LXP", "학습관리시스템", "에듀테크"],
+        "정책/사업":  ["교육부", "RISE", "글로컬", "혁신지원", "LINC", "사업비", "예산",
+                      "지원금", "지원 사업", "교원양성", "역량 강화"],
+        "입학/행정":  ["무전공", "자율전공", "선출", "선임", "대학교 인사"],
+        "대학/기관":  ["대학교", "대학", "카이스트", "연세", "한양", "서울"],
     }
 
     def run(self, clusters, keywords, sim_matrix):
@@ -272,11 +287,15 @@ class SynthesizerAgent:
         return result
 
     def _infer_label(self, members):
-        text = " ".join(members)
+        """다수결 투표: 그룹 내 키워드 중 가장 많이 매칭되는 카테고리 선택"""
+        scores = {}
         for label, hints in self.CATEGORY_HINTS.items():
-            if any(h in text for h in hints):
-                return label
-        return "기타"
+            count = sum(1 for m in members if any(h in m for h in hints))
+            if count > 0:
+                scores[label] = count
+        if not scores:
+            return "기타"
+        return max(scores, key=scores.get)
 
 
 class SubagentCoordinator:
@@ -303,8 +322,29 @@ class SubagentCoordinator:
 
         # Agent 3
         self.log.append("[Agent 3: Synthesizer] 대표 키워드 선정 + 카테고리 라벨링")
-        final = self.synthesizer.run(cleaned, keywords, sim_matrix)
-        self.log.append(f"  → {len(final)}개 최종 그룹")
+        labeled = self.synthesizer.run(cleaned, keywords, sim_matrix)
+
+        # Coordinator 후처리: 동일 라벨 그룹 병합
+        self.log.append("[Coordinator] 동일 라벨 그룹 병합")
+        merged = {}
+        for g in labeled:
+            lbl = g["label"]
+            if lbl not in merged:
+                merged[lbl] = {"label": lbl, "members": [], "id": len(merged)}
+            merged[lbl]["members"].extend(g["members"])
+
+        final = []
+        for lbl, info in merged.items():
+            members = info["members"]
+            rep = pick_representative(keywords, members, sim_matrix)
+            final.append({
+                "id": info["id"],
+                "label": lbl,
+                "representative": rep,
+                "members": members,
+                "size": len(members),
+            })
+        self.log.append(f"  → 병합 후 {len(final)}개 최종 그룹")
 
         return final, sim_matrix, cleaned
 

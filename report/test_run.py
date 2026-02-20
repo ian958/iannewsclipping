@@ -630,10 +630,10 @@ if __name__ == "__main__":
     print("  처리: KeywordMergerAgent → 합의도 계산 → 카테고리 순위 결정")
     print("  목표: 빅카인즈용 OR 전용 검색식 후보 3개 생성\n")
 
-    validated = run_phase6(r_a, r_b, r_c, r_d, logger)
-    print_query_candidates(validated)
+    validated, distances = run_phase6(r_a, r_b, r_c, r_d, logger)
+    print_query_candidates(validated, distances)
     _dir = os.path.dirname(os.path.abspath(__file__))
-    save_query_candidates(validated, out_dir=_dir)
+    save_query_candidates(validated, distances, out_dir=_dir)
 
     # ── 전체 프로세스 로그 저장 ────────────────────────────
     logger.record("Main", "전체 파이프라인 완료",
